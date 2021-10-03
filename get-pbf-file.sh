@@ -11,13 +11,24 @@ echo
 # Check if iOSM PBF file is valid on latest action
 artifact_url() {
   if [[ -z $REPO ]]; then
-    echo Argument REPO is not specified, fail to get OSM PBF file from latest action
+    echo Argument REPO is not specified, fail to get OSM PBF file from latest action >&2
     return 1
   fi
 
   curl --silent https://api.github.com/repos/$REPO/actions/artifacts\?per_page\=1 \
-  | jq -r "select(has(\"artifacts\")).artifacts[] | select(.name=\"$TARGET\") | .archive_download_url" \
-  | head -1
+  | jq -c "select(has(\"artifacts\")).artifacts[] | select(.name=\"$TARGET\")" \
+  | head -1 >latest-artifact
+
+  [[ ! -s latest-artifact ]] && return 1
+
+  date=$(jq -r .created_at latest-artifact); [[ $date == null ]] && return 1
+  let DIFF=(`date +%s`-`date +%s -d $date`)/86400
+  if [[ $DIFF -le 5 ]]; then
+    echo $(jq -r .archive_download_url) && return 0
+  else
+    echo Latest artifact of osm.pbf is outdated >&2
+    return 1
+  fi
 }
 
 # Fetch OSM PBF file from latest action
@@ -28,7 +39,7 @@ get_pbf_file_from_artifact() {
     echo Argument TOKEN_DOWNLOAD_ARTIFACT is not specified, fail to get OSM PBF file with Github API
     return 1
   else
-    echo Dwnloading artifact from latest action
+    echo Downloading artifact from latest action
   fi
 
   curl --silent -L -H "Authorization: token $TOKEN_DOWNLOAD_ARTIFACT" $artifact_url -o $TARGET.zip || return 1
@@ -43,7 +54,7 @@ update_pbf_file() {
   [[ -n $POLY_FILE ]] && ARGUMENT_POLY_FILE="-B=$POLYFILE"
 
   echo Updating OSM PBF file with osmctools...
-  osmupdate --verbose $TARGET updated.osm.pbf --hour ARGUMENT_POLY_FILE || {
+  osmupdate --verbose $TARGET updated.osm.pbf ARGUMENT_POLY_FILE || {
     echo Fail to update $TARGET with osmupdate
     mv $TARGET updated.osm.pbf
   }
@@ -62,7 +73,6 @@ if [[ -n $artifact_url ]]; then
     [[ -e $TARGET ]] && rm $TARGET
   }
 fi
-
 
 # Get OSM PBF file from Geofabrik
 if [[ ! -e $TARGET ]]; then
